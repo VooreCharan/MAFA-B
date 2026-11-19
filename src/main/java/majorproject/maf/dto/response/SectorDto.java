@@ -1,0 +1,19 @@
+package majorproject.maf.dto.response;
+
+import lombok.*;
+
+import java.io.Serial;
+import java.io.Serializable;
+
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+public class SectorDto implements Serializable {
+
+    @Serial
+    private static final long serialVersionUID = 1L;
+
+    private Long id;
+    private String name;
+
+}

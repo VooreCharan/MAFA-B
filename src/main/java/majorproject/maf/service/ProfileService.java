@@ -1,0 +1,194 @@
+package majorproject.maf.service;
+
+import majorproject.maf.dto.request.PreferenceRequest;
+import majorproject.maf.dto.request.ProfileRequest;
+import majorproject.maf.dto.response.*;
+import majorproject.maf.exception.InvalidProfileDetailsException;
+import majorproject.maf.model.enums.EmploymentStatus;
+import majorproject.maf.model.enums.SalaryRange;
+import majorproject.maf.model.enums.UserStatus;
+import majorproject.maf.model.serving.Companies;
+import majorproject.maf.model.serving.CompanyMaster;
+import majorproject.maf.model.serving.SectorMaster;
+import majorproject.maf.model.serving.Sectors;
+import majorproject.maf.model.user.User;
+import majorproject.maf.model.user.UserPreferences;
+import majorproject.maf.model.user.UserProfile;
+import majorproject.maf.repository.*;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+@Service
+public class ProfileService {
+
+        private final UserProfileRepository userProfileRepository;
+        private final UserRepository userRepo;
+        private final UserPreferencesRepository userPreferencesRepository;
+        private final CompanyMasterRepository companyMasterRepository;
+        private final SectorMasterRepository sectorMasterRepository;
+        private final PortfolioService portfolioService;
+
+    public ProfileService(UserPreferencesRepository userPreferencesRepository, UserRepository userRepo, UserProfileRepository userProfileRepository, CompanyMasterRepository companyMasterRepository, SectorMasterRepository sectorMasterRepository, PortfolioService portfolioService) {
+            this.companyMasterRepository = companyMasterRepository;
+            this.sectorMasterRepository = sectorMasterRepository;
+            this.userProfileRepository = userProfileRepository;
+            this.userRepo = userRepo;
+            this.userPreferencesRepository = userPreferencesRepository;
+            this.portfolioService = portfolioService;
+    }
+
+        @Transactional
+        public void createProfile(ProfileRequest request,UserDto userDto) {
+            try {
+                User user = userRepo.findByEmail(userDto.getEmail());
+                UserProfile userProfile = buildProfile(new UserProfile(),request);
+                userProfile.setUser(user);
+                user.setPhone(request.getPhone());
+                user.setStatus(UserStatus.ACTIVE);
+                user.setPhoneVerified(true);
+                userProfile.setBalance(0.0);
+                userRepo.save(user);
+                userProfileRepository.save(userProfile);
+            }catch(Exception ex) {
+                throw new InvalidProfileDetailsException("Profile creation failed: " + ex.getMessage());
+            }
+        }
+
+        @Transactional
+        public void updateProfile(ProfileRequest request, UserDto userDto) {
+            User user = userRepo.findByEmail(userDto.getEmail());
+            UserProfile existingProfile = userProfileRepository.findByUserId(userDto.getId());
+            user.setPhone(request.getPhone());
+            userRepo.save(user);
+            UserProfile userProfile = buildProfile(existingProfile, request);
+            userProfileRepository.save(userProfile);
+        }
+
+        public Profile getProfile(UserDto userDto) {
+            int userId = userDto.getId();
+            UserProfile userProfile = userProfileRepository.findByUserId(userId);
+            return new Profile(userDto.getEmail(), userProfile.getUsername(),userDto.getPhone(),userProfile.getBalance(), userProfile.getFirstName(), userProfile.getLastName(),
+                    userProfile.getDateOfBirth(), userProfile.getGender(),
+                    userProfile.getAddressLine1(), userProfile.getAddressLine2(), userProfile.getCity(),
+                    userProfile.getState(), userProfile.getPostalCode(), userProfile.getCountry(),
+                    userProfile.getJobTitle(), userProfile.getCompanyName(), userProfile.getIndustry(),
+                    userProfile.getEmploymentStatus().toString(), userProfile.getSalaryRange().toString()
+            );
+        }
+
+        private UserProfile buildProfile(UserProfile profile, ProfileRequest request) {
+
+            EmploymentStatus employmentStatus = switch (request.getEmploymentStatus().toLowerCase()) {
+                case "employed" -> EmploymentStatus.EMPLOYED;
+                case "self_employed" -> EmploymentStatus.SELF_EMPLOYED;
+                case "student" -> EmploymentStatus.STUDENT;
+                case "retired" -> EmploymentStatus.RETIRED;
+                default -> EmploymentStatus.UNEMPLOYED;
+            };
+
+            SalaryRange salaryRange = switch (request.getSalaryRange().toLowerCase()) {
+                case "50k_100k" -> SalaryRange.BETWEEN_50K_100K;
+                case "100k_200k" -> SalaryRange.BETWEEN_100K_200K;
+                case "above_200k" -> SalaryRange.ABOVE_200K;
+                default -> SalaryRange.BELOW_50K;
+            };
+
+            profile.setFirstName(request.getFirstName());
+            profile.setLastName(request.getLastName());
+            profile.setDateOfBirth(request.getDateOfBirth());
+            profile.setGender(request.getGender());
+            profile.setUsername(request.getUsername());
+
+            profile.setAddressLine1(request.getAddressLine1());
+            profile.setAddressLine2(request.getAddressLine2());
+            profile.setCity(request.getCity());
+            profile.setState(request.getState());
+            profile.setPostalCode(request.getPostalCode());
+            profile.setCountry(request.getCountry());
+
+            profile.setJobTitle(request.getJobTitle());
+            profile.setCompanyName(request.getCompanyName());
+            profile.setIndustry(request.getIndustry());
+            profile.setEmploymentStatus(employmentStatus);
+            profile.setSalaryRange(salaryRange);
+
+            return profile;
+        }
+
+        public void createPreferences(PreferenceRequest request, int id) {
+            User user = userRepo.getReferenceById(id);
+            UserPreferences preferences = new UserPreferences();
+            preferences.setUser(user);
+            fillPreferences(request, preferences);
+        }
+
+        public void updatePreferences(PreferenceRequest request, int id) {
+            UserPreferences userPreferences= userPreferencesRepository.findByUserId(id);
+            fillPreferences(request,userPreferences);
+        }
+
+        public PreferenceResponse getPreferences(UserDto u) {
+
+            UserPreferences prefs = userPreferencesRepository.findFullPreferences(u.getId());
+
+            Set<SectorDto> sectorIds = prefs.getSectors()
+                    .stream()
+                    .map(cp -> new SectorDto(cp.getSector().getId(),cp.getSector().getName()))
+                    .collect(Collectors.toSet());
+
+            Set<CompanyDto> companyIds = prefs.getCompanies()
+                    .stream()
+                    .map(cp-> new CompanyDto(cp.getCompany().getId(),cp.getCompany().getSymbol(),cp.getCompany().getName(),new SectorDto(cp.getCompany().getSector().getId(),cp.getCompany().getSector().getName())) )
+                    .collect(Collectors.toSet());
+
+            return new PreferenceResponse(
+                    prefs.getInvestmentGoals(),
+                    prefs.getRiskTolerance(),
+                    prefs.getPreferredAsset(),
+                    sectorIds,
+                    companyIds
+            );
+        }
+
+        private void fillPreferences(PreferenceRequest request, UserPreferences prefs) {
+
+            prefs.setRiskTolerance(request.getRiskTolerance());
+            prefs.setInvestmentGoals(request.getInvestmentGoals());
+            prefs.setPreferredAsset(request.getPreferredAsset());
+
+            // 🔥 BATCH FETCH (1 query each)
+            List<SectorMaster> sectors = sectorMasterRepository.findByIdIn(request.getSectorIds());
+
+            List<CompanyMaster> companies = companyMasterRepository.findByIdIn(request.getCompanyIds());
+
+            // update sectors
+            prefs.getSectors().clear();
+            for (SectorMaster sector : sectors) {
+                Sectors sp = new Sectors();
+                sp.setUser(prefs);
+                sp.setSector(sector);
+                prefs.getSectors().add(sp);
+            }
+
+            // update companies
+            prefs.getCompanies().clear();
+            for (CompanyMaster company : companies) {
+                Companies cp = new Companies();
+                cp.setUser(prefs);
+                cp.setCompany(company);
+                portfolioService.addToWatchlist(prefs.getId(),company.getSymbol());
+                prefs.getCompanies().add(cp);
+            }
+
+            userPreferencesRepository.save(prefs);
+        }
+
+        public boolean isUsernameAvailable(String username) {
+            return userProfileRepository.findByUsername(username)==null;
+        }
+
+}

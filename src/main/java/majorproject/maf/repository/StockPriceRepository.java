@@ -1,0 +1,63 @@
+package majorproject.maf.repository;
+
+import majorproject.maf.model.StockPrice;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+public interface StockPriceRepository extends JpaRepository<StockPrice, Long> {
+
+    List<StockPrice> findBySymbolOrderByDateDesc(String symbol);
+
+    List<StockPrice> findBySymbolOrderByDateDesc(String symbol, PageRequest pageRequest);
+
+    // Date range: between startDate and endDate
+    List<StockPrice> findBySymbolAndDateBetweenOrderByDateDesc(String symbol, LocalDate start, LocalDate end);
+    List<StockPrice> findBySymbolAndDateBetweenOrderByDateDesc(String symbol, LocalDate start, LocalDate end, PageRequest pageRequest);
+
+    // Before a specific date
+    List<StockPrice> findBySymbolAndDateBeforeOrderByDateDesc(String symbol, LocalDate before);
+    List<StockPrice> findBySymbolAndDateBeforeOrderByDateDesc(String symbol, LocalDate before, PageRequest pageRequest);
+
+    // After a specific date
+    List<StockPrice> findBySymbolAndDateAfterOrderByDateDesc(String symbol, LocalDate after);
+    List<StockPrice> findBySymbolAndDateAfterOrderByDateDesc(String symbol, LocalDate after, PageRequest pageRequest);
+
+    StockPrice findTopBySymbolOrderByDateDesc(String symbol);
+
+    @Query("select symbol from StockPrice group by symbol")
+    List<String> findAllSymbols();
+
+    @Query("""
+    select sp
+    from StockPrice sp
+    where sp.symbol in :symbols
+    and sp.date = (
+        select max(sp2.date) from StockPrice sp2
+    ) order by sp.symbol
+    """)
+    List<StockPrice> batchFind(List<String> symbols);
+
+    @Query("""
+        select sp.close
+        from StockPrice sp
+        where sp.symbol = :symbol
+        order by sp.date desc
+        limit 2
+    """)
+    List<Double> singleSymbolPriceChange(String symbol);
+
+    @Query("""
+    select sp
+    from StockPrice sp
+    where sp.symbol in :symbols
+    order by sp.date desc
+    limit :length
+""")
+    List<StockPrice> multipleSymbolPrice(Set<String> symbols, int length);
+}

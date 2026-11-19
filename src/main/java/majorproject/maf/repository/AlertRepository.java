@@ -1,0 +1,25 @@
+package majorproject.maf.repository;
+
+import majorproject.maf.model.Alert;
+import majorproject.maf.model.enums.AlertStatus;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public interface AlertRepository extends JpaRepository<Alert, Long> {
+
+    List<Alert> findByUserId(Integer userId);
+
+    List<Alert> findByUserId(Integer userId, PageRequest pageRequest);
+
+    List<Alert> findByUserIdAndStatus(Integer userId, AlertStatus status);
+
+    List<Alert> findByUserIdAndStatus(Integer userId, AlertStatus status,PageRequest pageRequest);
+
+    Alert findByUserIdAndId(Integer userId, Long alertId);
+
+    List<Alert> findAllByStatus(AlertStatus status);
+}

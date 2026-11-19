@@ -1,0 +1,141 @@
+package majorproject.maf.service;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import majorproject.maf.dto.response.ChatDto;
+import majorproject.maf.model.Chat;
+import majorproject.maf.model.user.User;
+import majorproject.maf.repository.ChatRepository;
+import majorproject.maf.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+
+@Service
+public class ChatService {
+
+    private final HttpClient httpClient;
+    private final ObjectMapper objectMapper;
+    private final ChatRepository chatRepo;
+    private final UserRepository userRepo;
+
+    @Value("${agents_endpoint:}")
+    String url;
+
+    public ChatService(ChatRepository chatRepo, UserRepository userRepo) {
+        this.userRepo = userRepo;
+        this.httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)   // important for Uvicorn
+                .build();
+        this.objectMapper = new ObjectMapper();
+        this.chatRepo = chatRepo;
+    }
+
+    public String generalChat(String query, int id) {
+        return callAgentService(query,id,"general-agent");
+    }
+
+    public String executeAgentChat(String query, int id) {
+        return callAgentService(query,id,"execute-agent");
+    }
+
+    public String marketResearchAgentChat(String query, int id) {
+        return callAgentService(query,id,"market-research-agent");
+    }
+
+    public String portfolioManagerAgentChat(String userQuery, int id) {
+        return callAgentService(userQuery,id,"portfolio-manager-agent");
+    }
+
+    public String investmentStrategyAgentChat(String userQuery, int id) {
+        return callAgentService(userQuery,id,"investment-strategy-agent");
+    }
+
+    public String mcpChat(String query, int id) {
+        return callAgentService(query,id,"mcp/query");
+    }
+
+    public void saveChat(User u, String userQuery, String agentResponse) {
+        Chat c=new Chat(u,userQuery,agentResponse);
+        chatRepo.save(c);
+    }
+
+    public List<ChatDto> getUserChats(int id,Integer limit,Integer page) {
+        List<Chat> chats;
+        int pageNumber = (page == null || page < 1) ? 0 : page - 1;
+
+        Pageable pageable = null;
+        if (limit != null) {
+            pageable = PageRequest.of(pageNumber, limit, Sort.by("createdAt").descending());
+        }
+        if(limit==null)
+            chats=chatRepo.findAllByUserIdOrderByCreatedAtDesc(id);
+        else
+            chats=chatRepo.findByUserIdOrderByCreatedAtDesc(id,pageable);
+        Collections.reverse(chats);
+        return chats.stream()
+                .map(chat -> new ChatDto(chat.getUserQuery(), chat.getAgentResponse()))
+                .collect(Collectors.toList());
+    }
+
+    public String callAgentService(String query, int userId, String agentEndpoint) {
+        try {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            String token = (String) auth.getCredentials();
+
+            Map<String, Object> body = Map.of(
+                    "query", query,
+                    "userId", userId
+            );
+            String jsonBody = objectMapper.writeValueAsString(body);
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url +agentEndpoint))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + token) // ✅ forward JWT
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+            System.out.println("Request "+jsonBody);
+            HttpResponse<String> response =
+                    httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            System.out.println("Response "+response.body());
+            if (response.statusCode() != 200) {
+                throw new RuntimeException(
+                        "Agent service error: " + response.statusCode() + " " + response.body()
+                );
+            }
+            Map<String, Object> parsed = objectMapper.readValue(response.body(), new TypeReference<>() {});
+
+            Boolean success = (Boolean) parsed.get("success");
+            if (Boolean.FALSE.equals(success)) {
+                throw new RuntimeException("Agent returned failure: " + response.body());
+            }
+
+            Object reply = parsed.get("response");
+            if (reply == null) reply = parsed.get("data");
+            if (reply == null) {
+                throw new RuntimeException("Agent response missing both 'response' and 'data' fields: " + response.body());
+            }
+
+            String message = String.valueOf(reply);
+            User user = userRepo.getReferenceById(userId);
+            saveChat(user, query, message);
+            return message;
+        } catch (Exception e) {
+            throw new RuntimeException("Chat service failed", e);
+        }
+    }
+}
